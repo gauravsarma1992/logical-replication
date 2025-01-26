@@ -10,7 +10,7 @@ type (
 
 	ReplicationWAL interface {
 		GetLogsAfterIndex(LogIndex, int) ([]WALLog, error)
-		ApplyLogs([]WALLog) error
+		Commit([]WALLog) error
 		GetSnapshot() ([]byte, error)
 	}
 )

@@ -2,6 +2,7 @@ package tempwal
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"time"
 
@@ -42,7 +43,7 @@ func (logWal *LogTempWAL) GetLogsAfterIndex(index replication.LogIndex, limit in
 	return
 }
 
-func (logWal *LogTempWAL) ApplyLogs(logs []replication.WALLog) (err error) {
+func (logWal *LogTempWAL) Commit(logs []replication.WALLog) (err error) {
 	return
 }
 
@@ -64,6 +65,7 @@ func (logWal *LogTempWAL) PushData() (err error) {
 				})
 				logWal.currIdx += 1
 			}
+			log.Println("Pushing data to WAL")
 			logWal.walLogs = append(logWal.walLogs, logs...)
 		}
 

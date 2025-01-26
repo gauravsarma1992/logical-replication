@@ -99,6 +99,19 @@ func (cluster *Cluster) GetRemoteNodes() (nodes []*Node) {
 	return
 }
 
+func (cluster *Cluster) GetActiveRemoteNodes() (nodes []*Node) {
+	cluster.clusterLock.RLock()
+	defer cluster.clusterLock.RUnlock()
+
+	for _, node := range cluster.nodes {
+		if node.ID == cluster.replMgr.localNode.ID || node.State != NodeStateHealthy {
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+	return
+}
+
 func (cluster *Cluster) GetNodes() (nodes []*Node) {
 	cluster.clusterLock.RLock()
 	defer cluster.clusterLock.RUnlock()

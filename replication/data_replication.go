@@ -3,7 +3,6 @@ package replication
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -18,6 +17,9 @@ const (
 	WriteConcernMajority WriteConcernT = WriteConcernT(0)
 	WriteConcernOne      WriteConcernT = WriteConcernT(1)
 	WriteConcernNone     WriteConcernT = WriteConcernT(2)
+
+	// DataReplicationManager
+	LogBatchSize = 1000
 )
 
 type (
@@ -94,7 +96,7 @@ func (drMgr *DataReplicationManager) DataReplicationPullHandler(reqMsg *Message)
 	if err = reqMsg.FillValue(dataReplicationPullReq); err != nil {
 		return
 	}
-	if walLogs, err = drMgr.wal.GetLogsAfterIndex(dataReplicationPullReq.CurrLogIndex, 10); err != nil {
+	if walLogs, err = drMgr.wal.GetLogsAfterIndex(dataReplicationPullReq.CurrLogIndex, LogBatchSize); err != nil {
 		return
 	}
 	// Send the current log index back to the remote node
@@ -181,7 +183,7 @@ func (drMgr *DataReplicationManager) shouldWaitForRemoteNode(replicatedCount int
 			return
 		}
 	case WriteConcernMajority:
-		if replicatedCount > len(drMgr.replMgr.cluster.GetRemoteNodes())/2 {
+		if replicatedCount > len(drMgr.replMgr.cluster.GetActiveRemoteNodes())/2 {
 			err = nil
 			return
 		}
@@ -201,17 +203,13 @@ func (drMgr *DataReplicationManager) replicateToRemoteNodes(walLogs []WALLog) (e
 	waitCh = make(chan int, 10)
 	defer close(waitCh)
 
-	if len(drMgr.replMgr.cluster.GetRemoteNodes()) == 0 {
+	if len(drMgr.replMgr.cluster.GetActiveRemoteNodes()) == 0 {
 		return
 	}
-	for _, node := range drMgr.replMgr.cluster.GetRemoteNodes() {
+	for _, node := range drMgr.replMgr.cluster.GetActiveRemoteNodes() {
 		go func(waitCh chan int, node *Node, walLogs []WALLog) {
 			defer func() {
-				if x := recover(); x != nil {
-					// Since the channel may be closed when the write concern is satisfied,
-					// we need to recover from the panic
-					log.Printf("channel closed early while writing")
-				}
+				recover()
 			}()
 
 			replicatedCount := 0
@@ -263,19 +261,18 @@ func (drMgr *DataReplicationManager) pollLocalWAL() (err error) {
 	var (
 		walLogs []WALLog
 	)
-	if walLogs, err = drMgr.wal.GetLogsAfterIndex(drMgr.currLogIndex, 10); err != nil {
+	if walLogs, err = drMgr.wal.GetLogsAfterIndex(drMgr.currLogIndex, LogBatchSize); err != nil {
 		return
 	}
 	if len(walLogs) == 0 {
 		err = fmt.Errorf(EmptyWALBufferError)
 		return
 	}
-	drMgr.replMgr.log.Println("Polling local wal data", len(walLogs))
+	//drMgr.replMgr.log.Println("Polling local wal data", len(walLogs))
 	if err = drMgr.Replicate(walLogs); err != nil {
 		drMgr.replMgr.log.Println("Error replicating data", err)
 		return
 	}
-	drMgr.replMgr.log.Println("Polling local wal data again", len(walLogs))
 	if err = drMgr.updateCurrLogIndex(drMgr.getCurrentLogIndexFromLogs(walLogs)); err != nil {
 		return
 	}

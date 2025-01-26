@@ -2,7 +2,6 @@ package tempwal
 
 import (
 	"context"
-	"log"
 	"strconv"
 	"time"
 
@@ -65,7 +64,7 @@ func (logWal *LogTempWAL) PushData() (err error) {
 				})
 				logWal.currIdx += 1
 			}
-			log.Println("Pushing data to WAL")
+			//log.Println("Pushing data to WAL")
 			logWal.walLogs = append(logWal.walLogs, logs...)
 		}
 

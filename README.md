@@ -147,8 +147,3 @@ understand if the system is working appropriately.
 - Induce different health based events specifically for a node 
 - Simulate elections
 - Simulate WAL read/write and rollback operations
-
-## TODO
-- Election interfaces
-- Health tracking
-- WAL interfaces

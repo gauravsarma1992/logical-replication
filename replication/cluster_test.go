@@ -47,7 +47,7 @@ func TestClusterGetLeaderNode(t *testing.T) {
 	tc := setupTestCluster(t)
 	defer teardownTestCluster(tc)
 
-	node := &Node{ID: 2, NodeType: NodeTypeLeader}
+	node := &Node{ID: 2}
 	tc.cluster.leaderNode = node
 
 	leaderNode, err := tc.cluster.GetLeaderNode()
@@ -64,7 +64,7 @@ func TestClusterAddLeaderNode(t *testing.T) {
 	tc := setupTestCluster(t)
 	defer teardownTestCluster(tc)
 
-	node := &Node{ID: 2, NodeType: NodeTypeLeader}
+	node := &Node{ID: 2}
 	err := tc.cluster.AddLeaderNode(node)
 	if err != nil {
 		t.Errorf("AddLeaderNode failed: %v", err)
@@ -112,7 +112,7 @@ func TestClusterRemoveNode(t *testing.T) {
 	node := &Node{ID: 2}
 	tc.cluster.nodes[node.ID] = node
 
-	err := tc.cluster.RemoveNode(node)
+	err := tc.cluster.RemoveNode(node.ID)
 	if err != nil {
 		t.Errorf("RemoveNode failed: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestClusterUpdate(t *testing.T) {
 	defer teardownTestCluster(tc)
 
 	node1 := &Node{ID: 2, LastUpdatedAt: time.Now().UTC()}
-	node2 := &Node{ID: 3, LastUpdatedAt: time.Now().UTC(), NodeType: NodeTypeLeader}
+	node2 := &Node{ID: 3, LastUpdatedAt: time.Now().UTC()}
 	nodes := []*Node{node1, node2}
 
 	err := tc.cluster.Update(nodes)

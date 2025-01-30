@@ -40,9 +40,8 @@ type (
 		ID  NodeID
 
 		// Runtime information of the State, phase and type of the node.
-		State    NodeStateT `json:"state"`
-		Phase    NodePhaseT `json:"phase"`
-		NodeType NodeTypeT  `json:"node_type"`
+		State NodeStateT `json:"state"`
+		Phase NodePhaseT `json:"phase"`
 
 		replMgr *ReplicationManager
 		Config  *NodeConfig
@@ -94,8 +93,8 @@ func (state NodeStateT) String() string {
 
 func (node *Node) String() string {
 	return fmt.Sprintf(
-		"Node ID: %d, State: %d, Phase: %d, Type: %d, Config: %s",
-		node.ID, node.State, node.Phase, node.NodeType, node.Config,
+		"Node ID: %d, State: %d, Phase: %d, Config: %s",
+		node.ID, node.State, node.Phase, node.Config,
 	)
 }
 
@@ -142,7 +141,6 @@ func NewNode(ctx context.Context, config *NodeConfig) (node *Node, err error) {
 		Config:        config,
 		State:         NodeStateUnknown,
 		Phase:         BootstrapNodePhase,
-		NodeType:      NodeTypeHidden,
 		nodeLock:      &sync.RWMutex{},
 		LastUpdatedAt: time.Now().UTC(),
 	}
@@ -179,12 +177,28 @@ func (node *Node) GetLocalUser() (msgUser *MessageUser) {
 		NodeID: node.ID,
 		Addr:   node.Config.Local,
 	}
+	if node.replMgr != nil {
+		msgUser.TermID = node.replMgr.electionMgr.GetCurrentTerm()
+	}
 	return
 }
 
 func (node *Node) ConnectToRemoteNode() (remoteNode *Node, err error) {
 	if remoteNode, err = node.replMgr.transportMgr.ConnectToNode(node.Config.Remote); err != nil {
 		return
+	}
+	return
+}
+
+func (node *Node) GetNodeType() (nodeType NodeTypeT) {
+	if node.replMgr.electionMgr.currElection.ProposedLeaderNode == nil {
+		nodeType = NodeTypeFollower
+		return
+	}
+	if node.replMgr.electionMgr.currElection.ProposedLeaderNode.ID == node.ID {
+		nodeType = NodeTypeLeader
+	} else {
+		nodeType = NodeTypeFollower
 	}
 	return
 }
@@ -197,24 +211,7 @@ func (node *Node) UpdateState(state NodeStateT) {
 	node.LastUpdatedAt = time.Now().UTC()
 }
 
-func (node *Node) UpdateNodeType(nodeType NodeTypeT) {
-	node.nodeLock.Lock()
-	defer node.nodeLock.Unlock()
-
-	node.NodeType = nodeType
-	node.LastUpdatedAt = time.Now().UTC()
-
-	node.replMgr.log.Println("Node type updated to", nodeType)
-}
-
 func (node *Node) Activate() (err error) {
-	// Update the node's type
-	if node.Config.Remote.String() == node.Config.Local.String() {
-		node.UpdateNodeType(NodeTypeLeader)
-	} else {
-		node.UpdateNodeType(NodeTypeFollower)
-	}
-
 	// Update the node's status
 	node.UpdateState(NodeStateHealthy)
 

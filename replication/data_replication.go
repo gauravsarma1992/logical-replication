@@ -3,6 +3,7 @@ package replication
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -12,6 +13,7 @@ const (
 	RemoteIndexNotMatchingError    = "Remote index not matching error"
 	EmptyWALBufferError            = "Empty WAL buffer error"
 	WriteConcernNotSatisfiedError  = "Write concern not satisfied error"
+	LogsWithWrongIndexError        = "Logs with wrong index error"
 
 	// WriteConcerns
 	WriteConcernMajority WriteConcernT = WriteConcernT(0)
@@ -67,7 +69,14 @@ func NewDataReplicationManager(ctx context.Context, wal ReplicationWAL) (drMgr *
 }
 
 func (drMgr *DataReplicationManager) PersistLocally(logs []WALLog) (err error) {
-	// TODO: Check if the logs are of the right index
+	if len(logs) == 0 {
+		return
+	}
+	if drMgr.getCurrentLogIndexFromLogs(logs) < drMgr.currLogIndex {
+		err = fmt.Errorf(LogsWithWrongIndexError)
+		log.Println("error while persisting to WAL", err)
+		return
+	}
 	if err = drMgr.wal.Commit(logs); err != nil {
 		return
 	}
@@ -127,7 +136,7 @@ func (drMgr *DataReplicationManager) DataReplicationPushHandler(reqMsg *Message)
 		return
 	}
 	drMgr.lastFetchedDataAt = time.Now().UTC()
-	drMgr.replMgr.log.Println("Received data from remote node", len(dataReplicationPushReq.WALLogs), dataReplicationPushReq.CurrLogIndex, reqMsg.Local)
+	//drMgr.replMgr.log.Println("Received data from remote node", len(dataReplicationPushReq.WALLogs), dataReplicationPushReq.CurrLogIndex, reqMsg.Local.NodeID)
 	// Send the current log index back to the remote node
 	respMsg = NewMessage(
 		InfoMessageGroup,
@@ -286,6 +295,10 @@ func (drMgr *DataReplicationManager) pollLeaderForWAL() (err error) {
 		leaderNode *Node
 		pullResp   *DataReplicationPullResponseMsg
 	)
+	if time.Since(drMgr.lastFetchedDataAt) < 15*time.Second {
+		err = fmt.Errorf("Last updated data is less than 15 seconds %s", drMgr.lastFetchedDataAt)
+		return
+	}
 	if leaderNode, err = drMgr.replMgr.cluster.GetLeaderNode(); err != nil {
 		return
 	}
@@ -313,7 +326,7 @@ func (drMgr *DataReplicationManager) pollLeaderForWAL() (err error) {
 	if err = drMgr.PersistLocally(pullResp.WALLogs); err != nil {
 		return
 	}
-	drMgr.replMgr.log.Println("Received data request from follower node", len(pullResp.WALLogs), drMgr.currLogIndex)
+	//drMgr.replMgr.log.Println("Received data request from follower node", len(pullResp.WALLogs), drMgr.currLogIndex)
 	return
 }
 
@@ -321,6 +334,7 @@ func (drMgr *DataReplicationManager) startPollingForLeaderNode() (err error) {
 	for {
 		if err = drMgr.pollLocalWAL(); err != nil {
 			time.Sleep(5 * time.Second)
+			return
 		}
 	}
 	return
@@ -328,35 +342,38 @@ func (drMgr *DataReplicationManager) startPollingForLeaderNode() (err error) {
 
 func (drMgr *DataReplicationManager) startPollingForFollowerNode() (err error) {
 	for {
-		if time.Since(drMgr.lastFetchedDataAt) > 15*time.Second {
-			time.Sleep(5 * time.Second)
-			continue
-		}
 		if err = drMgr.pollLeaderForWAL(); err != nil {
 			time.Sleep(5 * time.Second)
-			continue
+			return
+		}
+	}
+	return
+}
+
+func (drMgr *DataReplicationManager) startPolling() (err error) {
+	for {
+		select {
+		case <-drMgr.ctx.Done():
+			return
+		default:
+			if drMgr.replMgr.localNode.GetNodeType() == NodeTypeLeader {
+				err = drMgr.startPollingForLeaderNode()
+			} else {
+				err = drMgr.startPollingForFollowerNode()
+			}
+			if err != nil {
+				if err.Error() == EmptyWALBufferError {
+					continue
+				}
+				//drMgr.replMgr.log.Println("Error in data replication manager", err)
+				continue
+			}
 		}
 	}
 	return
 }
 
 func (drMgr *DataReplicationManager) Start() (err error) {
-	for {
-		select {
-		case <-drMgr.ctx.Done():
-			return
-		default:
-
-			if drMgr.replMgr.localNode.NodeType == NodeTypeLeader {
-				err = drMgr.startPollingForLeaderNode()
-			} else {
-				err = drMgr.startPollingForFollowerNode()
-			}
-			if err != nil {
-				drMgr.replMgr.log.Println("Error in data replication manager", err)
-				return
-			}
-		}
-	}
+	go drMgr.startPolling()
 	return
 }

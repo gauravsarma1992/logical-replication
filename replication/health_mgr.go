@@ -24,6 +24,8 @@ type (
 		healthLimits NodeHealthLimits
 
 		lastUpdatedState NodeStateT
+
+		healthChangeCh chan *HealthChangeEvent
 	}
 
 	NodeHealth struct {
@@ -35,6 +37,11 @@ type (
 		CPUUsage     float64
 		MemoryUsage  float64
 		StorageUsage float64
+	}
+
+	HealthChangeEvent struct {
+		Node      *Node
+		NodeState NodeStateT
 	}
 )
 
@@ -53,6 +60,7 @@ func NewHealthManager(ctx context.Context) (healthMgr *HealthManager, err error)
 		health:           &NodeHealth{},
 		healthLimits:     DefaultNodeHealthLimits(),
 		lastUpdatedState: NodeStateUnknown,
+		healthChangeCh:   make(chan *HealthChangeEvent, 100),
 	}
 	healthMgr.replMgr = ctx.Value(ReplicationManagerInContext).(*ReplicationManager)
 	return
@@ -118,6 +126,11 @@ func (healthMgr *HealthManager) CheckHealth() (err error) {
 		healthMgr.replMgr.log.Println("Node state changed to", checkedState)
 		healthMgr.replMgr.localNode.UpdateState(checkedState)
 		healthMgr.lastUpdatedState = checkedState
+
+		healthMgr.healthChangeCh <- &HealthChangeEvent{
+			Node:      healthMgr.replMgr.localNode,
+			NodeState: checkedState,
+		}
 	}
 
 	return

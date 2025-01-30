@@ -53,6 +53,8 @@ func (transportManager *TransportManager) setupMsgHandlers() (err error) {
 	transportManager.msgHandlers[HeartbeatMessageType] = transportManager.replMgr.hbMgr.HeartbeatHandler
 	transportManager.msgHandlers[DataReplicationPushMessageType] = transportManager.replMgr.drMgr.DataReplicationPushHandler
 	transportManager.msgHandlers[DataReplicationPullMessageType] = transportManager.replMgr.drMgr.DataReplicationPullHandler
+	transportManager.msgHandlers[ElectionStartMessageType] = transportManager.replMgr.electionMgr.ElectionStartHandler
+	transportManager.msgHandlers[ElectionResultMessageType] = transportManager.replMgr.electionMgr.ElectionResultHandler
 	return
 }
 

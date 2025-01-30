@@ -14,11 +14,19 @@ const (
 	HeartbeatMessageGroup   MessageGroupT = MessageGroupT(2)
 
 	// Message Types
-	PingMessageType                MessageTypeT = MessageTypeT(0)
-	ClusterDiscoveryMessageType    MessageTypeT = MessageTypeT(1)
-	HeartbeatMessageType           MessageTypeT = MessageTypeT(2)
+	// Info messages
+	PingMessageType             MessageTypeT = MessageTypeT(0)
+	ClusterDiscoveryMessageType MessageTypeT = MessageTypeT(1)
+	HeartbeatMessageType        MessageTypeT = MessageTypeT(2)
+
+	// Data Replication messages
 	DataReplicationPushMessageType MessageTypeT = MessageTypeT(3)
 	DataReplicationPullMessageType MessageTypeT = MessageTypeT(4)
+
+	// Election messages
+	ElectionStartMessageType    MessageTypeT = MessageTypeT(5)
+	ElectionResultMessageType   MessageTypeT = MessageTypeT(6)
+	ElectionStepDownMessageType MessageTypeT = MessageTypeT(7)
 )
 
 type (
@@ -44,7 +52,11 @@ type (
 	}
 	MessageUser struct {
 		NodeID NodeID    `json:"node_id"`
+		TermID TermID    `json:"term_id"`
 		Addr   *NodeAddr `json:"addr"`
+	}
+	ErrorMessage struct {
+		Reason string `json:"reason"`
 	}
 )
 
@@ -67,6 +79,30 @@ func NewMessage(group MessageGroupT, msgType MessageTypeT, localUser *MessageUse
 
 		Group: group,
 		Type:  msgType,
+		Value: msgVal,
+	}
+	return
+}
+
+func (msg *Message) ReverseWithValue(value interface{}) (revMsg *Message) {
+	var (
+		err    error
+		msgVal []byte
+	)
+	if msgVal, err = json.Marshal(value); err != nil {
+		log.Println("error while marshaling value in NewMessage", err)
+		return
+	}
+	revMsg = &Message{
+		ID:        msg.ID,
+		Version:   msg.Version,
+		Timestamp: msg.Timestamp,
+
+		Local:  msg.Remote,
+		Remote: msg.Local,
+
+		Group: msg.Group,
+		Type:  msg.Type,
 		Value: msgVal,
 	}
 	return

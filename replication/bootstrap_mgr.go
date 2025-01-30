@@ -24,7 +24,8 @@ type (
 		Node *Node `json:"node"`
 	}
 	ClusterDiscoveryResponse struct {
-		Nodes []*Node `json:"nodes"`
+		Nodes    []*Node   `json:"nodes"`
+		Election *Election `json:"election"`
 	}
 )
 
@@ -73,7 +74,10 @@ func (bootstrapMgr *BootstrapManager) ClusterDiscoveryHandler(reqMsg *Message) (
 		ClusterDiscoveryMessageType,
 		reqMsg.Remote,
 		bootstrapMgr.replMgr.localNode.GetLocalUser(),
-		&ClusterDiscoveryResponse{Nodes: bootstrapMgr.replMgr.cluster.GetNodes()},
+		&ClusterDiscoveryResponse{
+			Nodes:    bootstrapMgr.replMgr.cluster.GetNodes(),
+			Election: bootstrapMgr.replMgr.electionMgr.currElection,
+		},
 	)
 	return
 }
@@ -102,6 +106,13 @@ func (bootstrapMgr *BootstrapManager) GetClusterInfo(remoteNode *Node) (err erro
 	if err = bootstrapMgr.replMgr.cluster.Update(clusterDiscoveryResp.Nodes); err != nil {
 		return
 	}
+	// Update the election details from the remote node
+	if clusterDiscoveryResp.Election == nil || clusterDiscoveryResp.Election.ID == 0 {
+		return
+	}
+	if err = bootstrapMgr.replMgr.electionMgr.UpdateElection(clusterDiscoveryResp.Election); err != nil {
+		return
+	}
 	return
 }
 
@@ -126,6 +137,9 @@ func (bootstrapMgr *BootstrapManager) Start() (err error) {
 		return
 	}
 	if bootstrapMgr.remoteNode, err = bootstrapMgr.replMgr.localNode.ConnectToRemoteNode(); err != nil {
+		return
+	}
+	if err = bootstrapMgr.GetClusterInfo(bootstrapMgr.remoteNode); err != nil {
 		return
 	}
 	// Activate the node

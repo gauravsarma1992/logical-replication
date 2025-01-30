@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -9,6 +10,10 @@ type (
 	HeartbeatManager struct {
 		ctx     context.Context
 		replMgr *ReplicationManager
+
+		heartbeatTracker map[NodeID]time.Time
+		hbChan           chan *HeartbeatNotAckEvent
+		hbLock           *sync.RWMutex
 	}
 	HeartbeatRequestMsg struct {
 		Node *Node `json:"node"`
@@ -16,11 +21,19 @@ type (
 	HeartbeatResponseMsg struct {
 		NodeID NodeID `json:"node_id"`
 	}
+
+	HeartbeatNotAckEvent struct {
+		NodeID      NodeID
+		TimeElapsed time.Duration
+	}
 )
 
 func NewHeartbeatManager(ctx context.Context) (hbMgr *HeartbeatManager, err error) {
 	hbMgr = &HeartbeatManager{
-		ctx: ctx,
+		ctx:              ctx,
+		heartbeatTracker: make(map[NodeID]time.Time, 10),
+		hbLock:           &sync.RWMutex{},
+		hbChan:           make(chan *HeartbeatNotAckEvent, 10),
 	}
 	hbMgr.replMgr = ctx.Value(ReplicationManagerInContext).(*ReplicationManager)
 	return
@@ -50,6 +63,9 @@ func (hbMgr *HeartbeatManager) HeartbeatHandler(reqMsg *Message) (respMsg *Messa
 
 func (hbMgr *HeartbeatManager) sendHeartbeat() (err error) {
 	// hbMgr.replMgr.log.Println("Sending heartbeat from node", hbMgr.replMgr.localNode, "to nodes - ", len(nodes))
+	hbMgr.hbLock.Lock()
+	defer hbMgr.hbLock.Unlock()
+
 	for _, node := range hbMgr.replMgr.cluster.GetRemoteNodes() {
 		if node.ID == hbMgr.replMgr.localNode.ID {
 			hbMgr.replMgr.log.Println("Skipping heartbeat to local node", node)
@@ -67,6 +83,28 @@ func (hbMgr *HeartbeatManager) sendHeartbeat() (err error) {
 		if _, err = hbMgr.replMgr.transportMgr.Send(heartbeatReqMsg); err != nil {
 			return
 		}
+		hbMgr.heartbeatTracker[node.ID] = time.Now().UTC()
+	}
+	return
+}
+
+func (hbMgr *HeartbeatManager) startHeartbeatTracker() (err error) {
+	hbMgr.hbLock.RLock()
+	defer hbMgr.hbLock.RUnlock()
+
+	for nodeID, lastSeenAtTime := range hbMgr.heartbeatTracker {
+		if time.Since(lastSeenAtTime) > 10*time.Second {
+			hbMgr.hbChan <- &HeartbeatNotAckEvent{
+				NodeID:      nodeID,
+				TimeElapsed: time.Since(lastSeenAtTime),
+			}
+		}
+		if time.Since(lastSeenAtTime) > 120*time.Second {
+			if err = hbMgr.replMgr.cluster.RemoveNode(nodeID); err != nil {
+				return
+			}
+		}
+
 	}
 	return
 }

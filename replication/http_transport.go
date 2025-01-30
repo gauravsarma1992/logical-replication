@@ -146,7 +146,8 @@ func (httpTransport *HttpTransport) messageHandler(c *gin.Context) {
 	}
 	if generatedMsg, err = msgHandler(receivedMsg); err != nil {
 		httpTransport.replMgr.log.Println("message handler failed with error", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		revMsg := receivedMsg.ReverseWithValue(&ErrorMessage{Reason: err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"message": revMsg})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

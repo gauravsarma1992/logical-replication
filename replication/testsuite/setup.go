@@ -56,6 +56,7 @@ func NewReplicationTestSuite(config *TestConfig) (replSuite *ReplicationTestSuit
 
 func (replSuite *ReplicationTestSuite) createAndRunNodes() (err error) {
 	for nodeCount := 0; nodeCount < int(replSuite.config.NoOfNodes); nodeCount++ {
+
 		var (
 			replMgr    *replication.ReplicationManager
 			nodeConfig *replication.NodeConfig
@@ -78,8 +79,7 @@ func (replSuite *ReplicationTestSuite) createAndRunNodes() (err error) {
 		go func() {
 			replMgr.Run()
 		}()
-
-		time.Sleep(2 * time.Second)
+		time.Sleep(1 * time.Second)
 	}
 	return
 }

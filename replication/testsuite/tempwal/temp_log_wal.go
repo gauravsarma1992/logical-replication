@@ -64,7 +64,7 @@ func (logWal *LogTempWAL) PushData() (err error) {
 				})
 				logWal.currIdx += 1
 			}
-			//log.Println("Pushing data to WAL")
+			//log.Println("Pushing data to WAL", logWal.currIdx, len(logs))
 			logWal.walLogs = append(logWal.walLogs, logs...)
 		}
 

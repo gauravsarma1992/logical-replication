@@ -71,7 +71,7 @@ func (electionMgr *ElectionManager) UpdateElection(election *Election) (err erro
 	// This is primarily being called by the bootstrap manager when the node is booting
 	// up for the first time and the remote node is being connected with.
 	// Based on the remote node's election data, the current node can map its election data.
-	if electionMgr.currElection != nil {
+	if electionMgr.currElection != nil && electionMgr.currElection.ID != 0 {
 		return
 	}
 
@@ -92,16 +92,18 @@ func (electionMgr *ElectionManager) DecideVote(election *Election) (voteStatus b
 	}
 
 	// If another ongoing election is present, then vote should be a NO, unless the ongoing election has timed out
+	// Even if there is an ongoing election with a higher term ID, the current node should vote NO for the new election.
+	// The older election should be allowed to complete, i.e Accepted or Rejected.
+	// If there are cases where the ongoing election is stuck for some reason, the timeout would help in ensuring the
+	// existing election is rejected and the new election is started.
 	if electionMgr.ongoingElection != nil {
 		if time.Since(electionMgr.ongoingElection.Timestamp) > 60*time.Second {
 			voteStatus = false
 			return
 		}
-		// Check ongoing election'ID
-		if election.ID < electionMgr.ongoingElection.ID {
-			voteStatus = false
-			return
-		}
+		// Forcefully reject the application if the timeout has been triggered
+		electionMgr.RejectElection()
+
 	}
 	// TODO: Check if the election is healthy?
 	// TODO: Check the log index
@@ -126,7 +128,14 @@ func (electionMgr *ElectionManager) ElectionStartHandler(reqMsg *Message) (respM
 		log.Println("election ID mismatch in start handler", elecStartReqMsg.Election.ID, electionMgr.ongoingElection)
 		return
 	}
-	electionMgr.ongoingElection = election
+	voteDecision := electionMgr.DecideVote(election)
+
+	// If the vote decision is true, then the ongoing election should be updated
+	// If it's not, then the ongoing election should be not be updated since there
+	// is a possibility that it was rejected because there is already an ongoing election
+	if voteDecision {
+		electionMgr.ongoingElection = election
+	}
 
 	respMsg = NewMessage(
 		InfoMessageGroup,
@@ -138,7 +147,7 @@ func (electionMgr *ElectionManager) ElectionStartHandler(reqMsg *Message) (respM
 				TermID:    election.ID,
 				FromNode:  electionMgr.replMgr.localNode,
 				ForNode:   election.ProposedLeaderNode,
-				Decision:  electionMgr.DecideVote(election),
+				Decision:  voteDecision,
 				Timestamp: time.Now().UTC(),
 			},
 		},
@@ -262,7 +271,7 @@ func (electionMgr *ElectionManager) sendResultMsgToNode(node *Node, elecResultMs
 	return
 }
 
-func (electionMgr *ElectionManager) triggerElection() (err error) {
+func (electionMgr *ElectionManager) triggerElection() (election *Election, err error) {
 	var (
 		elecResultReqMsg *ElectionResultReqMsg
 		decision         bool
@@ -296,8 +305,8 @@ func (electionMgr *ElectionManager) GetRandomInterval() (randInterval int) {
 	return
 }
 
-func (electionMgr *ElectionManager) ConductElection() (err error) {
-	electionMgr.replMgr.log.Println("Conducting election")
+func (electionMgr *ElectionManager) ConductElection(event interface{}) (err error) {
+	electionMgr.replMgr.log.Println("Conducting election with abstract event", event, "for remote nodes", len(electionMgr.replMgr.cluster.GetActiveRemoteNodes()))
 
 	beforeLoopElection := electionMgr.currElection
 	for {
@@ -316,7 +325,7 @@ func (electionMgr *ElectionManager) ConductElection() (err error) {
 			return
 		}
 		// The election should be triggered as long as the `ShouldTransition` returns true
-		if err = electionMgr.triggerElection(); err != nil {
+		if _, err = electionMgr.triggerElection(); err != nil {
 			electionMgr.replMgr.log.Println("Error triggering election", err)
 			time.Sleep(time.Duration(electionMgr.GetRandomInterval()) * time.Second)
 			continue
@@ -333,7 +342,18 @@ func (electionMgr *ElectionManager) ConductElection() (err error) {
 
 func (electionMgr *ElectionManager) AcceptElection() (err error) {
 
-	//electionMgr.replMgr.log.Println("Election accepted for proposed leader node", electionMgr.ongoingElection.ProposedLeaderNode)
+	electionMgr.replMgr.log.Println("Election accepted for proposed leader node", electionMgr.ongoingElection.ProposedLeaderNode)
+
+	// There can be a case where there is a conflict in the ongoing election's acceptance
+	// and the timeout which is triggered when the ongoing election is stuck.
+	// This brings us to the impact of when this edge case is reached.
+	// Since this is mainly triggered because the node had to participate in a new election
+	// and had to vote YES since the timeout was triggered, the ongoing election should be
+	// not be applied. Hence, it will return back silently without any error.
+	if electionMgr.ongoingElection == nil {
+		electionMgr.replMgr.log.Println("Ongoing election not nil for AcceptElection")
+		return
+	}
 
 	// Complete the ongoing election to current election
 	// This ensures the termID is also updated
@@ -355,6 +375,10 @@ func (electionMgr *ElectionManager) RejectElection() (err error) {
 	electionMgr.elecMgrLock.Lock()
 	defer electionMgr.elecMgrLock.Unlock()
 
+	if electionMgr.ongoingElection == nil {
+		electionMgr.replMgr.log.Println("Ongoing election not nil for RejectElection")
+		return
+	}
 	electionMgr.replMgr.log.Println("Election rejected for proposed leader node", electionMgr.ongoingElection.ProposedLeaderNode.ID)
 	electionMgr.ongoingElection = nil
 	return
@@ -392,10 +416,10 @@ func (electionMgr *ElectionManager) startPolling() (err error) {
 			if !electionMgr.ShouldFocusOnNode(healthEvent.Node.ID) {
 				continue
 			}
-			if healthEvent.Node.State != NodeStateUnhealthy {
+			if healthEvent.Node.State != NodeStateUnhealthy && electionMgr.currElection.ID != 0 {
 				continue
 			}
-			if err = electionMgr.ConductElection(); err != nil {
+			if err = electionMgr.ConductElection(healthEvent); err != nil {
 				electionMgr.replMgr.log.Println("error while conducting election", err)
 				continue
 			}
@@ -408,14 +432,14 @@ func (electionMgr *ElectionManager) startPolling() (err error) {
 			if clusterEvent.Added {
 				continue
 			}
-			if err = electionMgr.ConductElection(); err != nil {
+			if err = electionMgr.ConductElection(clusterEvent); err != nil {
 				electionMgr.replMgr.log.Println("error while conducting election", err)
 				continue
 			}
 			continue
 		// Checks if cluster has no leader
-		case <-electionMgr.replMgr.cluster.clusterNoLeaderEventCh:
-			if err = electionMgr.ConductElection(); err != nil {
+		case clusterNoLeaderEvent := <-electionMgr.replMgr.cluster.clusterNoLeaderEventCh:
+			if err = electionMgr.ConductElection(clusterNoLeaderEvent); err != nil {
 				electionMgr.replMgr.log.Println("error while conducting election", err)
 				continue
 			}
@@ -425,7 +449,7 @@ func (electionMgr *ElectionManager) startPolling() (err error) {
 			if !electionMgr.ShouldFocusOnNode(hbEvent.NodeID) {
 				continue
 			}
-			if err = electionMgr.ConductElection(); err != nil {
+			if err = electionMgr.ConductElection(hbEvent); err != nil {
 				electionMgr.replMgr.log.Println("error while conducting election", err)
 				continue
 			}

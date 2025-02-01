@@ -15,6 +15,17 @@ I am going to be using this service as a replication service for my custom
 file based blog.
 It's going to be fun!
 
+## Take it for a spin!
+
+To spawn a test suite which creates 3 nodes running on incremental ports
+starting from 9000. This also has a dummy WAL generator in the path
+`replication/testsuite/tempwal/` folder which periodically pushes data into
+an in-memory log object.
+```bash
+cd replication/testsuite
+go run setup.go
+```
+
 ## Design
 The overall service is broken down into submodules or `managers` which own
 a particular piece of the functionality and try to handle things solely in
